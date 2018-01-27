@@ -5,9 +5,10 @@ authors = ["?"]
 
 [dependencies]
 subprocess = "0.1.12"
-winapi = { version = "0.3.4", features = ["winuser", "winbase"] }
+winapi = { version = "0.3.4", features = ["winuser", "winbase", "libloaderapi", "processthreadsapi"] }
 libc = "0.2.0"
 bindgen = "0.32.3"
 bytes = "0.4.6"
 byteorder = "1.2.1"
 pelite = "0.4.0"
+kernel32-sys = "0.2.2"
